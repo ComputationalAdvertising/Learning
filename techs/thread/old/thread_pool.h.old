@@ -1,0 +1,122 @@
+/*!
+ *  Copyright (c) 2016 by Contributors
+ *  \file thread_pool.h
+ *  \brief thread pool
+ *  \author ZhouYong
+ */
+#ifndef OPENMIT_TOOLS_THREAD_THREAD_POOL_H_
+#define OPENMIT_TOOLS_THREAD_THREAD_POOL_H_
+
+#include <condition_variable>
+#include <functional>
+#include <list>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <vector>
+#include <iostream>
+
+namespace mit {
+/*!
+ * \brief thread pool implementation using c++11
+ */
+class ThreadPool {
+  public:
+    /*! \brief constructor and initialize thread number */
+    ThreadPool(int thread_num = 1);
+    
+    /*! \brief destructor */
+    ~ThreadPool();
+
+    /*! \brief task function type */
+    using Task = std::function<void(void)>;
+  
+    /*! \brief start thread pool */
+    void Start();
+
+    /*! \brief stop thread pool */
+    void Stop();
+
+    /*! \brief add a task. return 0: success, -1: failure */
+    void Append(Task task);
+
+  private:
+    /*! \brief thread work function */
+    void ThreadExecutor();
+
+  private:
+    /*! \brief mutex */
+    std::mutex mu_;
+    /*! \brief condition variable for when task queue is empty */
+    std::condition_variable_any cond_empty_;
+  /*! \brief task queue */
+    std::list<Task> task_queue_;
+    /*! \brief whether thread pool is running */
+    bool running_;
+    /*! \brief number of thread */
+    int thread_num_;
+    /*! \brief vector pointer to store thread object */
+    std::vector<std::shared_ptr<std::thread>> threads_;   
+}; // class ThreadPool
+
+ThreadPool::ThreadPool(int thread_num) {
+  thread_num_ = thread_num;
+  running_ = true;
+  threads_.resize(thread_num_);
+} // ThreadPool::ThreadPool
+
+ThreadPool::~ThreadPool() {
+  if (running_) Stop();
+} // ThreadPool::~ThreadPool
+
+void ThreadPool::Start() {
+  // for loop create thread
+  for (int i = 0; i < thread_num_; ++i) {
+    threads_[i] = std::make_shared<std::thread>(std::bind(&ThreadPool::ThreadExecutor, this));
+  }
+} // ThreadPool::Start
+
+void ThreadPool::Stop() {
+  if (running_) {
+    mu_.lock(); running_ = false; mu_.unlock();
+    // loop wait thread stop
+    for (size_t i = 0; i < thread_num_; ++i) {
+      threads_[i]->join();
+      //threads_[i]->detach();
+      std::cout << "thread join i : " << i << std::endl;
+    }
+  } 
+} // ThreadPool::Stop
+
+void ThreadPool::Append(Task task) {
+  std::lock_guard<std::mutex> lk(mu_);
+  task_queue_.push_front(task);
+  cond_empty_.notify_one();   // notify one thread to work
+} // ThreadPool::Append
+
+void ThreadPool::ThreadExecutor() {
+  Task task = nullptr;
+  while (true) {
+    if (! running_) {
+      std::cout << "break running_: " << running_ << std::endl;
+      break;
+    }
+
+    {
+      //std::cout << "running_: " << running_ << std::endl;
+      std::lock_guard<std::mutex> lk(mu_);
+      if (task_queue_.empty()) {
+        cond_empty_.wait(mu_);   // wait a task to notify 
+      }
+      if (task_queue_.empty()) continue;
+
+      task = task_queue_.front();   // fetch a task 
+      task_queue_.pop_front();      // pop 
+    }
+    // exec task
+    task(); 
+  }
+} // ThreadPool::ThreadExecutor
+
+}
+#endif // OPENMIT_TOOLS_THREAD_THREAD_POOL_H_

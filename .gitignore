@@ -1,0 +1,7 @@
+# compile
+build/ 
+*.o
+exec_*
+
+# python
+*.pyc
